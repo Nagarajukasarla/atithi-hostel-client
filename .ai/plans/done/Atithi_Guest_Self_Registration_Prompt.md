@@ -1,0 +1,926 @@
+# Guest Self Registration
+
+## Objective
+
+Implement a **Guest Self Registration** feature in the existing Atithi Hostel Management Platform.
+
+The self-registration page must be **publicly accessible**, while the existing Atithi dashboard and all other platform functionality must remain protected and accessible only to authenticated users.
+
+The implementation should be added to the existing Atithi application. **Do not create a separate microservice or separate application for this feature.**
+
+---
+
+## Existing Architecture
+
+The feature should be implemented inside the existing Atithi application.
+
+### Existing React routes
+
+```text
+/dashboard
+/customer
+/rooms
+/settings
+```
+
+### New public React route
+
+```text
+/public/customer-registration/:token
+```
+
+This route must be accessible without login.
+
+The existing authenticated routes must remain protected.
+
+### Backend module
+
+Add the functionality under the existing backend as a logical module/package:
+
+```text
+Atithi Backend
+└── public-registration
+      ├── QR generation
+      ├── public registration form support
+      └── public registration API
+```
+
+Use the existing Spring Boot backend, React frontend, authentication, database, entities, repositories, services, and project conventions wherever applicable.
+
+---
+
+# 1. Business Flow
+
+The overall flow should be:
+
+```text
+                           Settings Page
+                                │
+                                ▼
+                  ┌──────────────────────────┐
+                  │ Customer Registration    │
+                  │        QR Code            │
+                  │                           │
+                  │ [Generate QR Code]         │
+                  │ [Download QR Code]         │
+                  └────────────┬─────────────┘
+                               │
+                               ▼
+                  ┌──────────────────────────┐
+                  │        QR Code            │
+                  │                           │
+                  │ https://atithi.../        │
+                  │ public/register/...       │
+                  └────────────┬─────────────┘
+                               │
+                         Customer scans
+                               │
+                               ▼
+                  ┌──────────────────────────┐
+                  │ Public Registration Page  │
+                  │                           │
+                  │ Hostel: Atithi ...        │
+                  │ First Name                 │
+                  │ Last Name                  │
+                  │ Mobile                     │
+                  │ Occupancy                  │
+                  │ Emergency Contact          │
+                  │ Emergency Contact Name     │
+                  │ Permanent Address          │
+                  │                           │
+                  │         [Submit]           │
+                  └────────────┬─────────────┘
+                               │
+                               │ POST
+                               ▼
+                  ┌──────────────────────────┐
+                  │ Public Registration API  │
+                  └────────────┬─────────────┘
+                               │
+                               ▼
+                  ┌──────────────────────────┐
+                  │      Customer Table       │
+                  │      Same Atithi DB       │
+                  └──────────────────────────┘
+```
+
+The customer should be able to scan the QR code, open the public registration page, enter their details, and submit the form without logging into Atithi.
+
+---
+
+# 2. Hostel Token Already Exists
+
+An important existing design decision:
+
+**The hostel registration token is already generated during hostel signup.**
+
+Do **not** create a new token when the QR code is generated.
+
+During hostel signup, the backend already generates a unique token and stores it against the hostel.
+
+Therefore, when the owner/receptionist clicks **Generate QR Code**, the system should simply:
+
+1. Get the authenticated hostel/user context from the JWT stored in the cookie.
+2. Determine the current hostel ID.
+3. Fetch the existing hostel token from the database.
+4. Build the public registration URL using that token.
+5. Generate an SVG QR code from that URL using ZXing.
+6. Return the SVG to the frontend.
+
+The QR generation operation must **not create or persist another token**.
+
+---
+
+# 3. Hostel Token
+
+The hostel table/entity must contain the token used for public customer registration.
+
+If the token already exists in the current hostel entity/table, reuse the existing field and implementation.
+
+If it does not exist or is not sufficient for this purpose, add the required token field.
+
+Conceptually:
+
+```text
+hostel
+--------------------------------
+id
+name
+...
+token
+active
+created_at
+updated_at
+...
+```
+
+The token must:
+
+- Be generated by the backend during hostel signup.
+- Be unique.
+- Be sufficiently random/unguessable.
+- Not be based on the database ID.
+- Not be based on the hostel name.
+- Not be regenerated when the QR is requested.
+- Be used to identify the hostel for public registration.
+
+Example:
+
+```text
+hostel_id     token                         active
+-------------------------------------------------
+15            8f4a7c9e2d...                 true
+16            b1c92a73f8...                 true
+17            92ad71ce4a...                 true
+```
+
+---
+
+# 4. Customer Table Change — IMPORTANT
+
+The existing `customer` table currently does **not** contain a hostel token field.
+
+Add:
+
+```text
+hostel_token
+```
+
+to the Customer entity/table.
+
+The field **must allow NULL values**.
+
+This is intentional because there are two different customer creation flows.
+
+### Flow A — Receptionist creates customer
+
+When a receptionist registers/creates a customer through the existing authenticated Atithi platform:
+
+```text
+Receptionist
+    ↓
+Existing customer registration
+    ↓
+Customer created
+    ↓
+hostel_token = NULL
+```
+
+Do **not** force a hostel token into existing receptionist-created customer records.
+
+### Flow B — Customer self-registers
+
+When a customer submits the new public self-registration form:
+
+```text
+Customer scans QR
+    ↓
+Token identifies hostel
+    ↓
+Customer submits form
+    ↓
+Customer created
+    ↓
+hostel_token = token from the public registration URL
+```
+
+Therefore:
+
+```text
+Customer
+---------------------------------
+id
+hostel_token       NULLABLE
+active
+created_at
+updated_at
+...
+```
+
+The `hostel_token` must be populated **only for customers created through the public self-registration flow**.
+
+For customers created through the existing receptionist/admin flow, it should remain `NULL`.
+
+Do not change the existing receptionist flow unnecessarily.
+
+---
+
+# 5. Public Registration URL
+
+The QR code should represent a URL similar to:
+
+```text
+https://app.atithi.com/public/customer-registration/8f4a7c9e2d...
+```
+
+The exact domain should come from the application's existing configuration/environment rather than being hardcoded.
+
+The token in the URL is the mechanism used to identify the hostel.
+
+The internal `hostel_id` must not be exposed in the public URL.
+
+For example:
+
+```text
+GOOD:
+https://app.atithi.com/public/customer-registration/8f4a7c9e2d...
+
+DO NOT USE:
+https://app.atithi.com/public/customer-registration/15
+```
+
+---
+
+# 6. How the Public Token Identifies the Hostel
+
+When the customer scans the QR code:
+
+```text
+Token
+  ↓
+Find hostel using token
+  ↓
+Validate token
+  ↓
+Validate hostel is active
+  ↓
+Return hostel information
+  ↓
+Display hostel name on public form
+```
+
+For example:
+
+```text
+https://app.atithi.com/public/customer-registration/8f4a7c9e2d...
+```
+
+The backend uses:
+
+```text
+8f4a7c9e2d...
+```
+
+to find the corresponding hostel.
+
+The customer should see:
+
+```text
+Hostel
+[ Atithi Comforts PG ]
+```
+
+The hostel field must be **read-only/disabled** and must not be editable by the customer.
+
+The frontend must not be trusted to provide the hostel ID or hostel name.
+
+The backend must resolve the hostel from the token.
+
+---
+
+# 7. Settings Page — Customer Registration
+
+Add a new section under the existing Settings page:
+
+```text
+Settings
+   └── Customer Registration
+```
+
+The page/section should provide:
+
+```text
+Customer Registration
+
+Allow customer self-registration
+        [ ON/OFF ]
+
+Registration QR Code
+
+    ┌─────────────────┐
+    │                 │
+    │       QR        │
+    │                 │
+    └─────────────────┘
+
+[ Generate QR Code ]
+
+Registration Link
+https://app.atithi.com/public/customer-registration/xxxxx
+
+[ Copy Link ]
+[ Download QR ]
+```
+
+### Important QR behavior
+
+The QR code does not represent a newly created resource.
+
+The hostel token already exists.
+
+Therefore:
+
+- The first click on **Generate QR Code** fetches the existing hostel token and generates the QR SVG.
+- The same QR must be displayed whenever the page is loaded again.
+- Refreshing the page must not create a new token.
+- Refreshing the page must not create a different QR code.
+- The same token must always produce the same registration URL and therefore the same QR.
+- There should be no normal "Regenerate QR" button.
+
+If an administrative token rotation/invalidation mechanism is required in the future, it should be implemented separately and explicitly. It should not be part of the normal QR generation flow.
+
+---
+
+# 8. QR Code API
+
+The QR endpoint is an **authenticated endpoint** because it is accessed from the protected Atithi Settings page.
+
+Use the existing authentication mechanism.
+
+Recommended endpoint:
+
+```http
+GET /api/v1/qr
+```
+
+The request should use the JWT from the existing authentication cookie.
+
+The backend should:
+
+```text
+JWT cookie
+    ↓
+Authenticate user
+    ↓
+Get hostel ID from authenticated context/JWT
+    ↓
+Find existing hostel token
+    ↓
+Build public registration URL
+    ↓
+Generate QR SVG
+    ↓
+Return SVG
+```
+
+There is **no need for a POST /generate or POST /create endpoint** because no new token/resource is being created.
+
+`GET /api/v1/qr` means:
+
+> Return the QR representation for the authenticated user's hostel.
+
+---
+
+# 9. QR Response Format
+
+The backend should generate the QR using **ZXing (Zebra Crossing)**.
+
+The endpoint should return SVG directly, not JSON containing a base64 image.
+
+Example:
+
+```java
+@GetMapping(
+    value = "/api/v1/qr",
+    produces = MediaType.IMAGE_SVG_XML_VALUE
+)
+public ResponseEntity<byte[]> getQr(Authentication authentication) {
+
+    Long hostelId = getHostelId(authentication);
+
+    String token = hostelService.findRegistrationTokenById(hostelId);
+
+    String registrationUrl =
+            publicBaseUrl + "/public/customer-registration/" + token;
+
+    String svg = qrService.generateSvg(registrationUrl);
+
+    return ResponseEntity.ok()
+            .contentType(MediaType.IMAGE_SVG_XML)
+            .body(svg.getBytes(StandardCharsets.UTF_8));
+}
+```
+
+The exact implementation should follow the existing project's coding conventions.
+
+Response:
+
+```http
+Content-Type: image/svg+xml
+```
+
+The frontend should display the returned SVG.
+
+---
+
+# 10. Do Not Store the QR Image
+
+Do **not** store the generated QR SVG in PostgreSQL or S3 for this feature.
+
+The source of truth is the existing hostel token.
+
+The QR is derived data:
+
+```text
+Hostel Token
+     ↓
+Registration URL
+     ↓
+ZXing
+     ↓
+SVG QR
+```
+
+Therefore, whenever the frontend requests the QR:
+
+```text
+GET /api/v1/qr
+```
+
+the backend can generate the SVG from the existing token and return it.
+
+This guarantees that refreshing the Settings page displays the same QR.
+
+S3 is **not required** for QR storage.
+
+S3 can be considered later for other persistent media such as customer photos, KYC documents, generated posters, etc.
+
+---
+
+# 11. Public Registration APIs
+
+The public customer registration flow should have two lightweight APIs.
+
+## API 1 — Get registration information
+
+```http
+GET /api/public/registration/{token}
+```
+
+This endpoint is public and does not require authentication.
+
+The backend should:
+
+1. Validate that the token exists.
+2. Find the corresponding hostel.
+3. Validate that the hostel is active.
+4. Return only the information required by the public registration page.
+
+Example response:
+
+```json
+{
+    "hostelName": "Atithi Comforts PG",
+    "active": true
+}
+```
+
+Do not expose internal database IDs or other sensitive hostel information.
+
+---
+
+## API 2 — Submit customer registration
+
+```http
+POST /api/public/registration/{token}
+```
+
+This endpoint is public and does not require authentication.
+
+Example request:
+
+```json
+{
+    "firstName": "Rahul",
+    "lastName": "Kumar",
+    "mobile": "9876543210",
+    "occupancy": "...",
+    "emergencyContact": "9123456780",
+    "emergencyContactName": "Suresh Kumar",
+    "permanentAddress": "Hyderabad..."
+}
+```
+
+The backend must resolve the hostel using the `{token}`.
+
+Do not accept `hostelId` from the frontend as the source of truth.
+
+The backend should internally set:
+
+```text
+customer.hostel_token = {token}
+```
+
+before saving the customer.
+
+---
+
+# 12. Public Registration Form
+
+Create the new React page:
+
+```text
+/public/customer-registration/:token
+```
+
+The page should contain:
+
+```text
+Customer Registration
+
+Hostel
+[ Atithi Comforts PG ]     ← Read-only / Disabled
+
+First Name
+[                       ]
+
+Last Name
+[                       ]
+
+Mobile Number
+[                       ]
+
+Occupancy
+[                       ]
+
+Emergency Contact
+[                       ]
+
+Emergency Contact Name
+[                       ]
+
+Permanent Address
+[                       ]
+
+[ Submit ]
+```
+
+The hostel name should be loaded from:
+
+```http
+GET /api/public/registration/{token}
+```
+
+The token comes from the route parameter:
+
+```text
+/public/customer-registration/:token
+```
+
+---
+
+# 13. Validation
+
+The public API must validate all input server-side.
+
+At minimum:
+
+```text
+firstName
+    → required
+
+lastName
+    → required if business rules require it
+
+mobile
+    → required
+    → valid format
+    → appropriate length
+
+occupancy
+    → validate according to existing business rules
+
+emergencyContact
+    → validate mobile/contact format where applicable
+
+emergencyContactName
+    → validate length/content
+
+permanentAddress
+    → required
+    → maximum length
+```
+
+Do not rely only on React/frontend validation.
+
+The backend must always perform validation because the API is public.
+
+Reuse existing Customer validation rules wherever possible.
+
+---
+
+# 14. Token Validation
+
+For every public registration request:
+
+```text
+token exists?
+    ↓
+token valid?
+    ↓
+hostel exists?
+    ↓
+hostel active?
+    ↓
+continue
+```
+
+If invalid:
+
+```text
+Invalid or expired registration link
+```
+
+If the hostel is inactive:
+
+```text
+Registration is currently unavailable
+```
+
+Do not expose unnecessary internal details.
+
+---
+
+# 15. Duplicate Customer Handling
+
+The public registration API must not blindly create duplicate customers.
+
+Before creating a customer, check the existing business rules for uniqueness/duplicate detection.
+
+For example, if Aadhaar is already collected/available in the customer model, or if another appropriate unique customer identifier is already present, use the existing business rules.
+
+Example:
+
+```text
+Aadhaar:
+878936472345
+
+already exists
+        ↓
+Do not blindly create another customer
+```
+
+If the existing public form does not collect Aadhaar, do not invent a new Aadhaar field just for this feature unless it is required by the existing business/domain model.
+
+The implementation should reuse the project's existing duplicate-handling strategy.
+
+---
+
+# 16. Security Requirements
+
+The public registration page being public does **not** mean the entire Atithi application is public.
+
+Only the required public routes/APIs should be accessible without authentication.
+
+Conceptually:
+
+```text
+PUBLIC
+
+/api/public/registration/**
+/public/customer-registration/**
+```
+
+while existing platform APIs remain authenticated:
+
+```text
+/api/v1/**
+```
+
+except for any existing explicitly public authentication endpoints.
+
+Do not weaken the existing security configuration unnecessarily.
+
+### Important
+
+The browser must never directly access PostgreSQL.
+
+The architecture must remain:
+
+```text
+Customer Browser
+       │
+       │ HTTPS
+       ▼
+Public API
+       │
+       │ internal database access
+       ▼
+PostgreSQL
+```
+
+The database must remain private.
+
+---
+
+# 17. Public API Protection
+
+Because the registration endpoints are public, add appropriate protection against abuse.
+
+At minimum:
+
+- Server-side validation.
+- Token validation.
+- Hostel active-status validation.
+- Reasonable request rate limiting/throttling if the project already has infrastructure for it.
+- Proper error handling.
+- Avoid exposing internal exception details.
+- Avoid exposing internal IDs unnecessarily.
+- Prevent mass/automated customer creation as much as reasonably possible.
+
+Use the project's existing security/error-handling conventions wherever available.
+
+---
+
+# 18. QR Download
+
+The Settings page should provide:
+
+```text
+[ Download QR ]
+```
+
+The downloaded file should preferably be SVG because the QR may be printed.
+
+The QR should remain high quality when printed.
+
+A separate download endpoint may be used if appropriate, or the frontend may download the already retrieved SVG.
+
+Do not introduce S3 solely for this download functionality.
+
+---
+
+# 19. Important Design Rules
+
+Follow these rules strictly:
+
+1. **Do not create a new microservice.**
+2. **Do not create a new hostel token when generating the QR.**
+3. **The hostel token is already created during hostel signup.**
+4. **Reuse the existing hostel token.**
+5. **Add `hostel_token` to the Customer table/entity as a nullable field.**
+6. **Self-registered customers must have `hostel_token` populated with the token from the public registration URL.**
+7. **Receptionist-created customers must continue to have `hostel_token = NULL`.**
+8. **Do not break or unnecessarily modify the existing receptionist customer-registration flow.**
+9. **The QR endpoint is authenticated.**
+10. **The public registration APIs are unauthenticated.**
+11. **The database is never directly exposed to the browser.**
+12. **The QR endpoint should return `image/svg+xml`, not JSON/base64.**
+13. **Do not store the QR image in S3 or PostgreSQL.**
+14. **Generate the SVG from the existing hostel token whenever requested.**
+15. **The same token must always produce the same registration URL/QR.**
+16. **Do not expose internal hostel IDs in the public registration URL.**
+17. **The backend must resolve the hostel from the token.**
+18. **Do not trust hostel information supplied by the public frontend.**
+19. **Use ZXing for QR generation.**
+20. **Follow existing Atithi project architecture, naming conventions, DTO patterns, exception handling, security configuration, and database migration strategy.**
+
+---
+
+# 20. Expected End-to-End Flow
+
+### Hostel Signup
+
+```text
+Hostel Signup
+      ↓
+Backend generates unique hostel token
+      ↓
+Token stored with hostel
+```
+
+### Owner opens Settings
+
+```text
+Settings
+   ↓
+Customer Registration
+   ↓
+Generate QR Code
+   ↓
+GET /api/v1/qr
+   ↓
+JWT → hostel ID
+   ↓
+Find existing hostel token
+   ↓
+Build registration URL
+   ↓
+ZXing generates SVG
+   ↓
+Return image/svg+xml
+   ↓
+React displays QR
+```
+
+### Owner refreshes Settings
+
+```text
+GET /api/v1/qr
+   ↓
+Same hostel
+   ↓
+Same token
+   ↓
+Same URL
+   ↓
+Same QR
+```
+
+### Customer Registration
+
+```text
+Customer scans QR
+      ↓
+/public/customer-registration/:token
+      ↓
+GET /api/public/registration/{token}
+      ↓
+Validate token
+      ↓
+Find hostel
+      ↓
+Return hostel name
+      ↓
+Display read-only hostel name
+      ↓
+Customer enters details
+      ↓
+POST /api/public/registration/{token}
+      ↓
+Validate token again
+      ↓
+Validate hostel
+      ↓
+Validate customer data
+      ↓
+Check duplicates
+      ↓
+Create Customer
+      ↓
+customer.hostel_token = token
+      ↓
+Save to same PostgreSQL database
+```
+
+---
+
+# 21. Implementation Expectation
+
+Before making changes:
+
+1. Inspect the existing Atithi backend structure.
+2. Inspect the existing Hostel entity/table and signup flow to confirm how the hostel token is currently generated/stored.
+3. Inspect the existing Customer entity/table and receptionist customer-creation flow.
+4. Inspect the existing authentication/JWT cookie implementation.
+5. Inspect the existing React routing and Settings page.
+6. Inspect the existing API/controller/service/repository conventions.
+7. Inspect the existing database migration mechanism.
+
+Then implement this feature **consistently with the existing codebase**.
+
+Do not rewrite unrelated code.
+
+Do not introduce unnecessary abstractions or microservices.
+
+Keep this feature lightweight, maintainable, secure, and consistent with the existing Atithi architecture.

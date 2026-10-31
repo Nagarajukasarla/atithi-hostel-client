@@ -1,0 +1,154 @@
+@import url("https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap");
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+    /* Stayloop PMS Modern Hotel Aesthetic Palette */
+    --color-primary: 222 47% 11%; /* Slate Dark / Header Text (#0F172A) */
+    --color-secondary: 243 75% 59%; /* Indigo Primary / CTA (#4F46E5) */
+    --color-accent: 262 83% 58%; /* Purple Accent (#7C3AED) */
+
+    --color-success: 158 64% 42%; /* Emerald Green (#10B981) */
+    --color-warning: 38 92% 50%; /* Amber Warning (#F59E0B) */
+    --color-danger: 350 89% 60%; /* Rose Red (#F43F5E) */
+
+    --color-border: 214 32% 91%; /* Soft Slate Border (#E2E8F0) */
+    --color-bg: 210 40% 98%; /* Dashboard Light Slate Background (#F8FAFC) */
+    --color-card: 0 0% 100%; /* Pure White Card Background (#FFFFFF) */
+    --color-table-header: 210 40% 96%; /* Header Row Background (#F1F5F9) */
+    --color-input-border: 214 32% 91%; /* Input Element Border (#E2E8F0) */
+
+    --color-sidebar-bg: 222 47% 9%; /* Midnight Dark Navy Sidebar (#0E1326) */
+    --color-sidebar-active: 243 75% 59%; /* Sidebar Active Gradient Pill (#4F46E5) */
+}
+
+body {
+    font-family:
+        "Inter",
+        system-ui,
+        -apple-system,
+        sans-serif;
+    background-color: hsl(var(--color-bg));
+    color: hsl(var(--color-primary));
+    margin: 0;
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+}
+
+/* Custom scrollbars for premium look */
+::-webkit-scrollbar {
+    width: 6px;
+    height: 6px;
+}
+
+::-webkit-scrollbar-track {
+    background: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+    background: hsl(var(--color-primary) / 0.15);
+    border-radius: 4px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+    background: hsl(var(--color-primary) / 0.3);
+}
+
+/* Animations helper */
+@keyframes pulse-ring {
+    0% {
+        transform: scale(0.33);
+    }
+    80%,
+    100% {
+        opacity: 0;
+    }
+}
+
+@keyframes pulse-dot {
+    0% {
+        transform: scale(0.8);
+    }
+    50% {
+        transform: scale(1);
+    }
+    100% {
+        transform: scale(0.8);
+    }
+}
+
+.pulse-active {
+    position: relative;
+}
+.pulse-active::before {
+    content: "";
+    position: absolute;
+    width: 120%;
+    height: 120%;
+    border-radius: 50%;
+    background-color: inherit;
+    opacity: 0.6;
+    animation: pulse-ring 1.5s cubic-bezier(0.215, 0.61, 0.355, 1) infinite;
+    top: -10%;
+    left: -10%;
+}
+
+@keyframes fadeInUp {
+    from {
+        opacity: 0;
+        transform: translateY(12px);
+    }
+    to {
+        opacity: 1;
+        transform: none;
+    }
+}
+
+.animate-fade-in-up {
+    animation: fadeInUp 0.4s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+}
+
+@keyframes toastSlideDown {
+    from {
+        opacity: 0;
+        transform: translateY(-16px) scale(0.96);
+    }
+    to {
+        opacity: 1;
+        transform: translateY(0) scale(1);
+    }
+}
+
+.animate-toast-slide-down {
+    animation: toastSlideDown 0.25s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+}
+
+@keyframes fadeIn {
+    from {
+        opacity: 0;
+    }
+    to {
+        opacity: 1;
+    }
+}
+
+.animate-fade-in {
+    animation: fadeIn 0.2s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+}
+
+@keyframes scaleUp {
+    from {
+        opacity: 0;
+        transform: scale(0.96);
+    }
+    to {
+        opacity: 1;
+        transform: scale(1);
+    }
+}
+
+.animate-scale-up {
+    animation: scaleUp 0.25s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+}
