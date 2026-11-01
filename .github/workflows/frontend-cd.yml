@@ -34,18 +34,31 @@ jobs:
           terraform_version: latest
           terraform_wrapper: false
 
-      - name: Initialize & Apply Frontend Terraform (Auto-Healing)
-        working-directory: terraform
-        run: |
-          terraform init -no-color
-          terraform apply -auto-approve -no-color
-
-      - name: Retrieve Distribution ID & S3 Bucket from Terraform
+      - name: Check Backend ALB Status & Auto-Heal Routing
         id: tf-outputs
         working-directory: terraform
         run: |
-          DIST_ID=$(terraform output -raw cloudfront_distribution_id)
-          BUCKET=$(terraform output -raw s3_bucket_name)
+          ALB_STATUS=$(aws elbv2 describe-load-balancers \
+            --names atithi-dev-alb \
+            --region ${{ env.AWS_REGION }} \
+            --query "LoadBalancers[0].State.Code" \
+            --output text 2>/dev/null || echo "not-found")
+          
+          echo "Current Backend ALB Status: $ALB_STATUS"
+          
+          if [ "$ALB_STATUS" == "active" ]; then
+            echo "Backend ALB is active. Initializing & applying Frontend Terraform to sync routing..."
+            terraform init -no-color
+            terraform apply -var="cloudfront_enabled=true" -auto-approve -no-color
+            DIST_ID=$(terraform output -raw cloudfront_distribution_id 2>/dev/null || echo "E3IJXZS95HCP8S")
+            BUCKET=$(terraform output -raw s3_bucket_name 2>/dev/null || echo "atithi-frontend-551626543871")
+          else
+            echo "⚠️ Backend ALB is not active (Backend services are currently paused)."
+            echo "Skipping ALB-dependent Terraform apply. Static assets will be safely built and deployed to S3."
+            DIST_ID="E3IJXZS95HCP8S"
+            BUCKET="atithi-frontend-551626543871"
+          fi
+          
           echo "CF_DIST_ID=$DIST_ID" >> $GITHUB_OUTPUT
           echo "S3_BUCKET=$BUCKET" >> $GITHUB_OUTPUT
           echo "Target CloudFront Distribution: $DIST_ID"
