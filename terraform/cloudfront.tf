@@ -34,7 +34,7 @@ locals {
 }
 
 resource "aws_cloudfront_distribution" "frontend" {
-  enabled             = true
+  enabled             = var.cloudfront_enabled
   is_ipv6_enabled     = true
   comment             = "Atithi Production Frontend Distribution"
   default_root_object = "index.html"

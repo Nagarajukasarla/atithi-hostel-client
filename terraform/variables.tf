@@ -21,3 +21,9 @@ variable "backend_target_group_name" {
   type        = string
   default     = "atithi-dev-app-tg"
 }
+
+variable "cloudfront_enabled" {
+  description = "Whether the CloudFront distribution is enabled to serve traffic"
+  type        = bool
+  default     = true
+}
