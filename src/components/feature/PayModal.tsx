@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from "react";
-import { IndianRupee, Loader2 } from "lucide-react";
+import { IndianRupee, Loader2, AlertTriangle } from "lucide-react";
 import { Modal } from "@/components/common/Modal";
 import { useSettings } from "@/context/SettingsContext";
 import { useToast } from "@/context/ToastContext";
@@ -37,9 +37,17 @@ export const PayModal: React.FC<PayModalProps> = ({
 
     const isDaily = customer.billingMode === "DAILY";
     const currency = settings.currencySymbol || "₹";
+    const isExited =
+        customer.customerStatus === "INACTIVE" ||
+        customer.allocationStatus === "ENDED" ||
+        (!customer.allocationStatus && Boolean(customer.checkOutDate));
 
     const handlePaySubmit = async () => {
         if (!customer || !payAmount || Number(payAmount) <= 0) return;
+        if (isExited) {
+            toast.error("Cannot record payment for an exited resident.");
+            return;
+        }
 
         setIsPaySubmitting(true);
         try {
@@ -90,9 +98,9 @@ export const PayModal: React.FC<PayModalProps> = ({
                     <button
                         type="button"
                         onClick={handlePaySubmit}
-                        disabled={isPaySubmitting || !payAmount || Number(payAmount) <= 0}
+                        disabled={isPaySubmitting || isExited || !payAmount || Number(payAmount) <= 0}
                         className={`inline-flex items-center gap-1.5 px-4 py-2 text-xs font-semibold rounded-xl shadow-md transition cursor-pointer ${
-                            isPaySubmitting || !payAmount || Number(payAmount) <= 0
+                            isPaySubmitting || isExited || !payAmount || Number(payAmount) <= 0
                                 ? "bg-slate-300 text-slate-500 cursor-not-allowed shadow-none"
                                 : "text-white bg-indigo-600 hover:bg-indigo-700 shadow-indigo-600/20"
                         }`}
@@ -113,6 +121,12 @@ export const PayModal: React.FC<PayModalProps> = ({
             }
         >
             <div className="space-y-5">
+                {isExited && (
+                    <div className="p-3 rounded-xl bg-amber-50 border border-amber-200 text-amber-800 text-xs flex items-center gap-2">
+                        <AlertTriangle className="w-4 h-4 shrink-0 text-amber-600" />
+                        <span>This resident has already exited the hostel. Payments cannot be recorded.</span>
+                    </div>
+                )}
                 {/* Outstanding Summary */}
                 <div className="grid grid-cols-2 gap-3">
                     <div className="p-3 rounded-xl bg-slate-50 border border-slate-200/80">

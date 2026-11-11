@@ -27,6 +27,7 @@ import { CustomerFinancialModal } from "../components/feature/CustomerFinancialM
 import { MonthlyCheckoutModal } from "../components/feature/MonthlyCheckoutModal";
 import { DailyCheckoutModal } from "../components/feature/DailyCheckoutModal";
 import { PayModal } from "../components/feature/PayModal";
+import { formatDate } from "@/utils";
 
 // Validation schema for Customer creation/modification
 const customerSchema = z.object({
@@ -153,6 +154,8 @@ export const Customers: React.FC = () => {
     const [persistedCustomerId, setPersistedCustomerId] = useState<number | null>(null);
     const [activeAllocation, setActiveAllocation] = useState<RoomAllocation | null>(null);
     const [isCheckingAllocation, setIsCheckingAllocation] = useState<boolean>(false);
+    const [isSavingCustomer, setIsSavingCustomer] = useState<boolean>(false);
+    const [isSubmitting, setIsSubmitting] = useState<boolean>(false);
     const [isExistingCustomer, setIsExistingCustomer] = useState<boolean>(false);
     const [isEditingPersonalDetails, setIsEditingPersonalDetails] = useState<boolean>(false);
     const [initialPersonalSnapshot, setInitialPersonalSnapshot] = useState<Record<string, any> | null>(null);
@@ -450,6 +453,8 @@ export const Customers: React.FC = () => {
         setIsFetchingTariff(false);
         setActiveAllocation(null);
         setIsCheckingAllocation(false);
+        setIsSavingCustomer(false);
+        setIsSubmitting(false);
         setIsExistingCustomer(false);
         setIsEditingPersonalDetails(true);
         setInitialPersonalSnapshot(null);
@@ -499,6 +504,8 @@ export const Customers: React.FC = () => {
     }, [searchParams, handleOpenAdd, setSearchParams]);
 
     const handleNextStep = async () => {
+        if (isSavingCustomer || isCheckingAllocation || isFetchingTariff || isSubmitting) return;
+
         let fieldsToValidate: (keyof CustomerFormValues)[] = [];
         if (wizardStep === 1) {
             if (watchedAadhaar && watchedAadhaar.trim().length > 0) {
@@ -549,6 +556,7 @@ export const Customers: React.FC = () => {
 
                 // Only persist customer to database if it's a new customer or personal details have changed
                 if (!isExistingCustomer || hasPersonalDetailsChanged) {
+                    setIsSavingCustomer(true);
                     try {
                         const response = await customerService.saveCustomer(personalData as any);
                         if (response.code === 200 || response.code === 201) {
@@ -575,9 +583,14 @@ export const Customers: React.FC = () => {
                         } else {
                             console.warn("Could not save customer personal details to backend:", response.data ?? response.description);
                             toast.error("Failed to save customer personal details.");
+                            return;
                         }
-                    } catch (err) {
+                    } catch (err: any) {
                         console.warn("Could not save customer details to backend:", err);
+                        toast.error(err?.message || "Failed to save customer personal details.");
+                        return;
+                    } finally {
+                        setIsSavingCustomer(false);
                     }
                 }
 
@@ -626,118 +639,125 @@ export const Customers: React.FC = () => {
     };
 
     const handleSave = async (data: CustomerFormValues) => {
-        const isDailyStay = data.billingMode === "DAILY";
-        const primaryChargeAmount = isDailyStay ? (data.dailyRate || 0) : data.monthlyRent;
-        const totalInitialCharges = primaryChargeAmount + data.advanceAmount;
-        const calculatedRemainingDue = Math.max(0, totalInitialCharges - data.amountPaid);
-        const derivedPaymentStatus: PaymentStatus =
-            data.amountPaid <= 0
-                ? "PENDING"
-                : data.amountPaid >= totalInitialCharges
-                  ? "SUCCESS"
-                  : "PENDING";
+        if (isSubmitting) return;
+        setIsSubmitting(true);
+        try {
+            const isDailyStay = data.billingMode === "DAILY";
+            const primaryChargeAmount = isDailyStay ? (data.dailyRate || 0) : data.monthlyRent;
+            const totalInitialCharges = primaryChargeAmount + data.advanceAmount;
+            const calculatedRemainingDue = Math.max(0, totalInitialCharges - data.amountPaid);
+            const derivedPaymentStatus: PaymentStatus =
+                data.amountPaid <= 0
+                    ? "PENDING"
+                    : data.amountPaid >= totalInitialCharges
+                      ? "SUCCESS"
+                      : "PENDING";
 
-        const payload: Omit<Customer, "id"> = {
-            fullName: `${data.firstName} ${data.lastName}`.trim(),
-            firstName: data.firstName,
-            lastName: data.lastName,
-            gender: data.gender,
-            dateOfBirth: data.dateOfBirth || "",
-            email: data.email || "",
-            mobileNumber: data.mobileNumber,
-            altMobileNumber: data.altMobileNumber || "",
-            permanentAddress: data.permanentAddress || "",
-            aadhaarNumber: data.aadhaarNumber || "",
-            emergencyContactName: data.emergencyContactName || "",
-            emergencyContactPhone: data.emergencyContactPhone || "",
-            occupation: data.occupation || "",
-            provideMissingDetailsLater: data.provideMissingDetailsLater,
-            floor: data.floor,
-            roomNumber: data.roomNumber,
-            bedNumber: data.bedNumber || "A",
-            checkOutDate: data.checkOutDate || undefined,
-            billingMode: data.billingMode,
-            dailyRate: data.billingMode === "DAILY" ? (data.dailyRate || undefined) : undefined,
-            monthlyRent: data.monthlyRent,
-            advanceAmount: data.advanceAmount,
-            amountPaid: data.amountPaid,
-            dueAmount: calculatedRemainingDue,
-            previousDue: data.previousDue ?? 0,
-            advanceStatus: getAdvanceStatus(),
-            paymentStatus: (data.paymentStatus as any) || derivedPaymentStatus,
-            paymentMethod: (data.paymentMethod as PaymentMethod) || "CASH",
-            roomTariffId: selectedTariffId || (data.roomTariffId ? Number(data.roomTariffId) : null),
-            joinDate: data.joinDate,
-        };
+            const payload: Omit<Customer, "id"> = {
+                fullName: `${data.firstName} ${data.lastName}`.trim(),
+                firstName: data.firstName,
+                lastName: data.lastName,
+                gender: data.gender,
+                dateOfBirth: data.dateOfBirth || "",
+                email: data.email || "",
+                mobileNumber: data.mobileNumber,
+                altMobileNumber: data.altMobileNumber || "",
+                permanentAddress: data.permanentAddress || "",
+                aadhaarNumber: data.aadhaarNumber || "",
+                emergencyContactName: data.emergencyContactName || "",
+                emergencyContactPhone: data.emergencyContactPhone || "",
+                occupation: data.occupation || "",
+                provideMissingDetailsLater: data.provideMissingDetailsLater,
+                floor: data.floor,
+                roomNumber: data.roomNumber,
+                bedNumber: data.bedNumber || "A",
+                checkOutDate: data.checkOutDate || undefined,
+                billingMode: data.billingMode,
+                dailyRate: data.billingMode === "DAILY" ? (data.dailyRate || undefined) : undefined,
+                monthlyRent: data.monthlyRent,
+                advanceAmount: data.advanceAmount,
+                amountPaid: data.amountPaid,
+                dueAmount: calculatedRemainingDue,
+                previousDue: data.previousDue ?? 0,
+                advanceStatus: getAdvanceStatus(),
+                paymentStatus: (data.paymentStatus as any) || derivedPaymentStatus,
+                paymentMethod: (data.paymentMethod as PaymentMethod) || "CASH",
+                roomTariffId: selectedTariffId || (data.roomTariffId ? Number(data.roomTariffId) : null),
+                joinDate: data.joinDate,
+            };
 
-        let customerIdToUse = persistedCustomerId;
-        if (!customerIdToUse && editCustomerId) {
-            customerIdToUse = Number(editCustomerId);
-        }
-
-        if (editCustomerId) {
-            try {
-                await customerService.editCustomer(editCustomerId, payload as any);
-                toast.info(`Customer profile for "${payload.fullName}" has been updated.`);
-            } catch (err: any) {
-                toast.error(err?.message || "Failed to update customer profile.");
+            let customerIdToUse = persistedCustomerId;
+            if (!customerIdToUse && editCustomerId) {
+                customerIdToUse = Number(editCustomerId);
             }
-        } else {
 
-            // Perform backend Customer Stay registration if customerId & roomId are available
-            if (customerIdToUse && selectedRoomObj && selectedRoomObj.id) {
+            if (editCustomerId) {
                 try {
-                    const stayRes = await customerStayService.createCustomerStay({
-                        customerId: customerIdToUse,
-                        hostelId: hostel?.id ? Number(hostel.id) : undefined,
-                        roomId: Number(selectedRoomObj.id),
-                        bedNumber: data.bedNumber || undefined,
-                        checkInDate: data.joinDate,
-                        checkOutDate: data.checkOutDate || undefined,
-                        financialTerms: {
-                            roomTariffId: selectedTariffId || (data.roomTariffId ? Number(data.roomTariffId) : null),
-                            billingMode: data.billingMode,
-                            dailyRate: data.billingMode === "DAILY" ? (data.dailyRate || undefined) : undefined,
-                            monthlyRent: data.billingMode === "DAILY" ? 0 : data.monthlyRent,
-                            securityDepositRequired: data.advanceAmount,
-                            billingAnchorDate: data.joinDate,
-                        },
-                        initialPayment: data.amountPaid > 0 ? {
-                            amount: data.amountPaid,
-                            paymentMode: (data.paymentMethod as PaymentMethod) || "CASH",
-                            notes: `Initial registration payment for Room ${data.roomNumber}${data.bedNumber ? ` Bed ${data.bedNumber}` : ""}`,
-                        } : undefined,
-                    });
-
-                    if (stayRes.code < 200 || stayRes.code >= 300) {
-                        toast.error(stayRes.description || "Failed to complete room allocation.");
-                        return;
-                    }
-                } catch (apiErr: any) {
-                    console.warn("Could not complete backend customer stay registration:", apiErr);
-                    const errorMsg = apiErr?.response?.data?.message || apiErr?.description || apiErr?.message;
-                    toast.error(errorMsg || "Room allocation failed.");
+                    await customerService.editCustomer(editCustomerId, payload as any);
+                    toast.info(`Customer profile for "${payload.fullName}" has been updated.`);
+                } catch (err: any) {
+                    toast.error(err?.message || "Failed to update customer profile.");
                     return;
                 }
+            } else {
+                // Perform backend Customer Stay registration if customerId & roomId are available
+                if (customerIdToUse && selectedRoomObj && selectedRoomObj.id) {
+                    try {
+                        const stayRes = await customerStayService.createCustomerStay({
+                            customerId: customerIdToUse,
+                            hostelId: hostel?.id ? Number(hostel.id) : undefined,
+                            roomId: Number(selectedRoomObj.id),
+                            bedNumber: data.bedNumber || undefined,
+                            checkInDate: data.joinDate,
+                            checkOutDate: data.checkOutDate || undefined,
+                            financialTerms: {
+                                roomTariffId: selectedTariffId || (data.roomTariffId ? Number(data.roomTariffId) : null),
+                                billingMode: data.billingMode,
+                                dailyRate: data.billingMode === "DAILY" ? (data.dailyRate || undefined) : undefined,
+                                monthlyRent: data.billingMode === "DAILY" ? 0 : data.monthlyRent,
+                                securityDepositRequired: data.advanceAmount,
+                                billingAnchorDate: data.joinDate,
+                            },
+                            initialPayment: data.amountPaid > 0 ? {
+                                amount: data.amountPaid,
+                                paymentMode: (data.paymentMethod as PaymentMethod) || "CASH",
+                                notes: `Initial registration payment for Room ${data.roomNumber}${data.bedNumber ? ` Bed ${data.bedNumber}` : ""}`,
+                            } : undefined,
+                        });
+
+                        if (stayRes.code < 200 || stayRes.code >= 300) {
+                            toast.error(stayRes.description || "Failed to complete room allocation.");
+                            return;
+                        }
+                    } catch (apiErr: any) {
+                        console.warn("Could not complete backend customer stay registration:", apiErr);
+                        const errorMsg = apiErr?.response?.data?.message || apiErr?.description || apiErr?.message;
+                        toast.error(errorMsg || "Room allocation failed.");
+                        return;
+                    }
+                }
+
+                toast.success(`Customer "${payload.fullName}" registered successfully.`);
             }
 
-            toast.success(`Customer "${payload.fullName}" registered successfully.`);
-        }
+            // Immediately close wizard modal so customer cannot click again
+            setIsModalOpen(false);
 
-        // Refresh rooms so capacity is updated in frontend
-        try {
-            const freshRooms = await roomService.getRooms();
-            if (freshRooms && Array.isArray(freshRooms.data)) {
-                setDbRooms(freshRooms.data);
+            // Refresh rooms so capacity is updated in frontend
+            try {
+                const freshRooms = await roomService.getRooms();
+                if (freshRooms && Array.isArray(freshRooms.data)) {
+                    setDbRooms(freshRooms.data);
+                }
+            } catch {
+                // ignore
             }
-        } catch {
-            // ignore
+
+            // Refresh live directory from backend
+            await loadDirectory();
+        } finally {
+            setIsSubmitting(false);
         }
-
-        // Refresh live directory from backend
-        await loadDirectory();
-
-        setIsModalOpen(false);
     };
 
     const handleDelete = async () => {
@@ -861,47 +881,56 @@ export const Customers: React.FC = () => {
         {
             header: "Latest",
             accessor: (row: CustomerDirectoryItem) => {
-                const dateStr = row.latestPaymentDate;
-                if (!dateStr) return <span className="text-slate-400">—</span>;
-                try {
-                    const d = new Date(dateStr);
-                    return isNaN(d.getTime())
-                        ? dateStr
-                        : d.toLocaleDateString("en-IN", { day: "2-digit", month: "short", year: "numeric" });
-                } catch {
-                    return dateStr;
-                }
+                if (!row.latestPaymentDate) return <span className="text-slate-400">—</span>;
+                return formatDate(row.latestPaymentDate, "2-digit");
             },
             sortable: true,
             sortKey: "latestPaymentDate",
         },
         {
             header: "Actions",
-            accessor: (row: CustomerDirectoryItem) => (
-                <div className="flex items-center gap-1.5">
-                    <button
-                        onClick={(e) => handleOpenPayModal(row, e)}
-                        className="inline-flex items-center gap-1 px-2.5 py-1.5 text-xs font-semibold text-white bg-indigo-600 hover:bg-indigo-700 rounded-lg shadow-sm transition cursor-pointer"
-                        title="Record payment"
-                    >
-                        <IndianRupee className="w-3 h-3" />
-                        Pay
-                    </button>
-                    {row.allocationId && (row.allocationStatus === "ACTIVE" || (!row.allocationStatus && !row.checkOutDate)) && (
+            accessor: (row: CustomerDirectoryItem) => {
+                const isExited =
+                    row.customerStatus === "INACTIVE" ||
+                    row.allocationStatus === "ENDED" ||
+                    (!row.allocationStatus && Boolean(row.checkOutDate));
+
+                if (isExited) {
+                    return (
+                        <div className="flex items-center">
+                            <span className="inline-flex items-center px-2.5 py-1 text-xs font-semibold text-slate-500 bg-slate-100 rounded-lg border border-slate-200">
+                                Exited
+                            </span>
+                        </div>
+                    );
+                }
+
+                return (
+                    <div className="flex items-center gap-1.5">
                         <button
-                            onClick={(e) => {
-                                e.stopPropagation();
-                                setEndStayTarget(row);
-                            }}
-                            className="inline-flex items-center gap-1 px-2.5 py-1.5 text-xs font-semibold text-rose-700 bg-rose-50 hover:bg-rose-100 border border-rose-200 rounded-lg transition cursor-pointer"
-                            title="End customer stay & checkout"
+                            onClick={(e) => handleOpenPayModal(row, e)}
+                            className="inline-flex items-center gap-1 px-2.5 py-1.5 text-xs font-semibold text-white bg-indigo-600 hover:bg-indigo-700 rounded-lg shadow-sm transition cursor-pointer"
+                            title="Record payment"
                         >
-                            <LogOut className="w-3.5 h-3.5" />
-                            <span>Exit</span>
+                            <IndianRupee className="w-3 h-3" />
+                            Pay
                         </button>
-                    )}
-                </div>
-            ),
+                        {row.allocationId && (
+                            <button
+                                onClick={(e) => {
+                                    e.stopPropagation();
+                                    setEndStayTarget(row);
+                                }}
+                                className="inline-flex items-center gap-1 px-2.5 py-1.5 text-xs font-semibold text-rose-700 bg-rose-50 hover:bg-rose-100 border border-rose-200 rounded-lg transition cursor-pointer"
+                                title="End customer stay & checkout"
+                            >
+                                <LogOut className="w-3.5 h-3.5" />
+                                <span>Exit</span>
+                            </button>
+                        )}
+                    </div>
+                );
+            },
         },
     ];
 
@@ -1107,8 +1136,7 @@ export const Customers: React.FC = () => {
                                             register={register}
                                             errors={errors}
                                             settings={settings}
-                                            billingMode={watchedBillingMode}
-                                            onBillingModeChange={(mode) => setValue("billingMode", mode, { shouldValidate: true })}
+                                            billingMode="MONTHLY"
                                             watchedRent={watchedRent}
                                             watchedDailyRate={watchedDailyRate}
                                             watchedSecurityDeposit={watchedAdvance}
@@ -1133,7 +1161,12 @@ export const Customers: React.FC = () => {
                                                 <button
                                                     type="button"
                                                     onClick={handlePrevStep}
-                                                    className="inline-flex items-center gap-1 px-4 py-2 border border-slate-200 rounded-xl text-xs font-semibold text-slate-700 bg-white hover:bg-slate-50 transition shadow-sm"
+                                                    disabled={isSavingCustomer || isCheckingAllocation || isFetchingTariff || isSubmitting}
+                                                    className={`inline-flex items-center gap-1 px-4 py-2 border rounded-xl text-xs font-semibold shadow-sm transition ${
+                                                        isSavingCustomer || isCheckingAllocation || isFetchingTariff || isSubmitting
+                                                            ? "bg-slate-100 text-slate-400 border-slate-200 cursor-not-allowed"
+                                                            : "border-slate-200 text-slate-700 bg-white hover:bg-slate-50 cursor-pointer"
+                                                    }`}
                                                 >
                                                     <ChevronLeft className="w-4 h-4" />
                                                     Back
@@ -1145,7 +1178,12 @@ export const Customers: React.FC = () => {
                                             <button
                                                 type="button"
                                                 onClick={() => setIsModalOpen(false)}
-                                                className="px-4 py-2 border border-slate-200 rounded-xl text-xs font-semibold text-slate-700 bg-white hover:bg-slate-50 transition shadow-sm"
+                                                disabled={isSavingCustomer || isCheckingAllocation || isFetchingTariff || isSubmitting}
+                                                className={`px-4 py-2 border rounded-xl text-xs font-semibold shadow-sm transition ${
+                                                    isSavingCustomer || isCheckingAllocation || isFetchingTariff || isSubmitting
+                                                        ? "bg-slate-100 text-slate-400 border-slate-200 cursor-not-allowed"
+                                                        : "border-slate-200 text-slate-700 bg-white hover:bg-slate-50 cursor-pointer"
+                                                }`}
                                             >
                                                 Cancel
                                             </button>
@@ -1154,18 +1192,25 @@ export const Customers: React.FC = () => {
                                                     key="btn-next"
                                                     type="button"
                                                     onClick={handleNextStep}
-                                                    disabled={isCheckingAllocation || isFetchingTariff || (wizardStep === 3 && Boolean(activeAllocation))}
-                                                    className={`inline-flex items-center gap-1 px-4 py-2 text-xs font-semibold rounded-xl shadow-md transition ${
-                                                        isCheckingAllocation || isFetchingTariff || (wizardStep === 3 && Boolean(activeAllocation))
+                                                    disabled={
+                                                        isSavingCustomer ||
+                                                        isCheckingAllocation ||
+                                                        isFetchingTariff ||
+                                                        isSubmitting ||
+                                                        (wizardStep === 3 && Boolean(activeAllocation))
+                                                    }
+                                                    className={`inline-flex items-center justify-center min-w-[76px] gap-1 px-4 py-2 text-xs font-semibold rounded-xl shadow-md transition ${
+                                                        isSavingCustomer ||
+                                                        isCheckingAllocation ||
+                                                        isFetchingTariff ||
+                                                        isSubmitting ||
+                                                        (wizardStep === 3 && Boolean(activeAllocation))
                                                             ? "bg-slate-300 text-slate-500 cursor-not-allowed shadow-none"
-                                                            : "text-white bg-indigo-600 hover:bg-indigo-700 shadow-indigo-600/20"
+                                                            : "text-white bg-indigo-600 hover:bg-indigo-700 shadow-indigo-600/20 cursor-pointer"
                                                     }`}
                                                 >
-                                                    {isCheckingAllocation || isFetchingTariff ? (
-                                                        <>
-                                                            <Loader2 className="w-4 h-4 animate-spin" />
-                                                            <span>{isCheckingAllocation ? "Checking Allocation..." : "Loading Pricing..."}</span>
-                                                        </>
+                                                    {isSavingCustomer || isCheckingAllocation || isFetchingTariff ? (
+                                                        <Loader2 className="w-4 h-4 animate-spin" />
                                                     ) : (
                                                         <>
                                                             <span>
@@ -1179,9 +1224,18 @@ export const Customers: React.FC = () => {
                                                 <button
                                                     key="btn-save"
                                                     type="submit"
-                                                    className="px-4 py-2 text-xs font-semibold text-white bg-indigo-600 hover:bg-indigo-700 rounded-xl shadow-md shadow-indigo-600/20 transition"
+                                                    disabled={isSubmitting}
+                                                    className={`inline-flex items-center justify-center min-w-[100px] gap-1 px-4 py-2 text-xs font-semibold rounded-xl shadow-md transition ${
+                                                        isSubmitting
+                                                            ? "bg-slate-300 text-slate-500 cursor-not-allowed shadow-none"
+                                                            : "text-white bg-indigo-600 hover:bg-indigo-700 shadow-indigo-600/20 cursor-pointer"
+                                                    }`}
                                                 >
-                                                    Save & Enlist
+                                                    {isSubmitting ? (
+                                                        <Loader2 className="w-4 h-4 animate-spin" />
+                                                    ) : (
+                                                        <span>Save & Enlist</span>
+                                                    )}
                                                 </button>
                                             )}
                                         </div>

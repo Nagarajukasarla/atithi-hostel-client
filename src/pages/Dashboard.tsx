@@ -21,6 +21,7 @@ import {
 } from "lucide-react";
 import { ResponsiveContainer, XAxis, YAxis, CartesianGrid, Tooltip, AreaChart, Area } from "recharts";
 import { useStatistics } from "@/context/StatisticsContext";
+import { formatCurrency as formatCurrencyUtil, formatDate } from "@/utils";
 
 export const Dashboard: React.FC = () => {
     const { settings } = useSettings();
@@ -38,25 +39,8 @@ export const Dashboard: React.FC = () => {
     };
 
     // Formatting helpers
-    const formatCurrency = (amount: number | null | undefined): string => {
-        const val = amount || 0;
-        return `${settings.currencySymbol}${val.toLocaleString("en-IN")}`;
-    };
-
-    const formatDate = (dateStr: string): string => {
-        if (!dateStr) return "—";
-        try {
-            const [year, month, day] = dateStr.split("-").map(Number);
-            const date = new Date(year, month - 1, day);
-            return date.toLocaleDateString("en-IN", {
-                day: "numeric",
-                month: "short",
-                year: "numeric",
-            });
-        } catch {
-            return dateStr;
-        }
-    };
+    const formatCurrency = (amount: number | null | undefined): string =>
+        formatCurrencyUtil(amount, { symbol: settings.currencySymbol });
 
     return (
         <div className="space-y-6 animate-fade-in-up">

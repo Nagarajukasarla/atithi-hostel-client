@@ -12,6 +12,7 @@ import {
 } from "lucide-react";
 import { financialService, type CustomerFinancialDetails } from "@/api/financialService";
 import { Modal } from "@/components/common/Modal";
+import { formatCurrency as formatCurrencyUtil, formatDate as formatDateUtil } from "@/utils";
 
 interface CustomerFinancialModalProps {
     isOpen: boolean;
@@ -68,20 +69,8 @@ export const CustomerFinancialModal: React.FC<CustomerFinancialModalProps> = ({
     const payments = details?.payments || [];
     const allocations = details?.paymentAllocations || [];
 
-    const formatCurrency = (val: number | null | undefined) => {
-        if (val === null || val === undefined) return "₹0.00";
-        return `₹${Number(val).toLocaleString("en-IN", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
-    };
-
-    const formatDate = (dateStr: string | null | undefined) => {
-        if (!dateStr) return "—";
-        try {
-            const d = new Date(dateStr);
-            return isNaN(d.getTime()) ? dateStr : d.toLocaleDateString("en-IN", { day: "2-digit", month: "short", year: "numeric" });
-        } catch {
-            return dateStr;
-        }
-    };
+    const formatCurrency = (val: number | null | undefined) => formatCurrencyUtil(val, { decimals: 2 });
+    const formatDate = (dateStr: string | null | undefined) => formatDateUtil(dateStr, "short");
 
     const getChargeStatusBadge = (status: string) => {
         switch (status?.toUpperCase()) {
@@ -305,12 +294,12 @@ export const CustomerFinancialModal: React.FC<CustomerFinancialModalProps> = ({
                                 <table className="w-full text-left text-xs text-slate-600">
                                     <thead className="bg-slate-50/80 text-slate-700 font-semibold uppercase tracking-wider text-[10px] border-b border-slate-200">
                                         <tr>
-                                            <th className="py-2.5 px-4">Charge Type</th>
+                                            <th className="py-2.5 px-4">Type</th>
                                             <th className="py-2.5 px-4">Period</th>
-                                            <th className="py-2.5 px-4">Due Date</th>
-                                            <th className="py-2.5 px-4 text-right">Charge Amount</th>
-                                            <th className="py-2.5 px-4 text-right">Paid / Allocated</th>
-                                            <th className="py-2.5 px-4 text-right">Remaining Due</th>
+                                            <th className="py-2.5 px-4">Date</th>
+                                            <th className="py-2.5 px-4 text-right">Amount</th>
+                                            <th className="py-2.5 px-4 text-right">Paid</th>
+                                            <th className="py-2.5 px-4 text-right">Due</th>
                                             <th className="py-2.5 px-4 text-center">Status</th>
                                             <th className="py-2.5 px-4">Notes</th>
                                         </tr>

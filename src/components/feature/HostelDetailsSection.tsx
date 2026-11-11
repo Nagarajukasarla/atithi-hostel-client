@@ -279,7 +279,7 @@ export const HostelDetailsSection: React.FC<HostelDetailsSectionProps> = ({ isEx
                                 ) : (
                                     <>
                                         <Save className="h-3.5 w-3.5" />
-                                        Save Property Details
+                                        Save
                                     </>
                                 )}
                             </button>

@@ -1,5 +1,8 @@
 import type { Hostel } from "@/types";
 
+export * from "./dateUtils";
+export * from "./currencyUtils";
+
 /**
  * Returns the short location of a hostel for sidebar/headers:
  * Format: (hostel?.address_lane_2 || hostel?.address_lane_1), hostel.city

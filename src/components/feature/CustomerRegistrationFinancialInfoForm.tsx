@@ -4,14 +4,12 @@ import { FormInput } from "@/components/common/FormInput";
 import { FormSelect } from "@/components/common/FormSelect";
 import type { Settings } from "@/types";
 import { PAYMENT_METHOD_OPTIONS } from "@/types";
-import { Calendar, CalendarDays } from "lucide-react";
 
 interface CustomerRegistrationFinancialInfoFormProps {
     register: UseFormRegister<any>;
     errors: FieldErrors<any>;
     settings: Settings;
     billingMode?: "MONTHLY" | "DAILY";
-    onBillingModeChange?: (mode: "MONTHLY" | "DAILY") => void;
     watchedRent: number;
     watchedDailyRate?: number;
     watchedSecurityDeposit: number;
@@ -24,7 +22,6 @@ export const CustomerRegistrationFinancialInfoForm: React.FC<CustomerRegistratio
     errors,
     settings,
     billingMode = "MONTHLY",
-    onBillingModeChange,
     watchedRent,
     watchedDailyRate = 0,
     watchedSecurityDeposit,
@@ -51,42 +48,10 @@ export const CustomerRegistrationFinancialInfoForm: React.FC<CustomerRegistratio
 
     return (
         <div className="space-y-6">
-            {/* Billing Mode Selection */}
-            <div>
-                <label className="block text-xs font-bold text-slate-700 mb-2">
-                    Stay / Billing Mode
-                </label>
-                <div className="grid grid-cols-2 gap-3 max-w-sm">
-                    <button
-                        type="button"
-                        onClick={() => onBillingModeChange?.("MONTHLY")}
-                        className={`flex items-center justify-center gap-2 py-2.5 px-4 rounded-xl text-xs font-bold border transition ${
-                            !isDaily
-                                ? "bg-indigo-600 text-white border-indigo-600 shadow-sm shadow-indigo-600/20"
-                                : "bg-white text-slate-700 border-slate-200 hover:bg-slate-50"
-                        }`}
-                    >
-                        <Calendar className="w-3.5 h-3.5" />
-                        <span>Monthly Stay</span>
-                    </button>
-                    <button
-                        type="button"
-                        onClick={() => onBillingModeChange?.("DAILY")}
-                        className={`flex items-center justify-center gap-2 py-2.5 px-4 rounded-xl text-xs font-bold border transition ${
-                            isDaily
-                                ? "bg-indigo-600 text-white border-indigo-600 shadow-sm shadow-indigo-600/20"
-                                : "bg-white text-slate-700 border-slate-200 hover:bg-slate-50"
-                        }`}
-                    >
-                        <CalendarDays className="w-3.5 h-3.5" />
-                        <span>Daily Basis Stay</span>
-                    </button>
-                </div>
-            </div>
-
             <div className="grid gap-5 sm:grid-cols-2">
                 {isDaily ? (
                     <FormInput
+                        key="dailyRate"
                         label="Agreed Daily Rate"
                         type="number"
                         prefixText={settings.currencySymbol}
@@ -96,6 +61,7 @@ export const CustomerRegistrationFinancialInfoForm: React.FC<CustomerRegistratio
                     />
                 ) : (
                     <FormInput
+                        key="monthlyRent"
                         label="Monthly Rent"
                         type="number"
                         prefixText={settings.currencySymbol}

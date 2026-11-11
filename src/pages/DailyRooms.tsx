@@ -33,6 +33,7 @@ import type { Room, RoomAllocation, PaymentMethod } from "@/types";
 import { customerService, type CustomerDirectoryItem } from "@/api/customerService";
 import { roomService } from "@/api/roomService";
 import { roomAllocationService } from "@/api/roomAllocationService";
+import { calculateDaysBetween } from "@/utils";
 import { roomTariffService } from "@/api/roomTariffService";
 import { customerStayService } from "@/api/customerStayService";
 import { useStatistics } from "@/context/StatisticsContext";
@@ -169,6 +170,8 @@ export const DailyRooms: React.FC = () => {
     const [persistedCustomerId, setPersistedCustomerId] = useState<number | null>(null);
     const [activeAllocation, setActiveAllocation] = useState<RoomAllocation | null>(null);
     const [isCheckingAllocation, setIsCheckingAllocation] = useState<boolean>(false);
+    const [isSavingCustomer, setIsSavingCustomer] = useState<boolean>(false);
+    const [isSubmitting, setIsSubmitting] = useState<boolean>(false);
     const [isExistingCustomer, setIsExistingCustomer] = useState<boolean>(false);
     const [isEditingPersonalDetails, setIsEditingPersonalDetails] = useState<boolean>(false);
     const [searchStatus, setSearchStatus] = useState<{
@@ -280,11 +283,15 @@ export const DailyRooms: React.FC = () => {
 
         if (!matchesSearch) return false;
 
+        const isExited =
+            c.customerStatus === "INACTIVE" ||
+            c.allocationStatus === "ENDED" ||
+            (!c.allocationStatus && Boolean(c.checkOutDate && c.checkOutDate < todayStr));
         const isUpcoming = c.joinDate && c.joinDate > todayStr;
         const hasDue = Number(c.outstandingBalance || 0) > 0;
 
-        if (statusFilter === "Active") return !isUpcoming;
-        if (statusFilter === "Upcoming") return isUpcoming;
+        if (statusFilter === "Active") return !isUpcoming && !isExited;
+        if (statusFilter === "Upcoming") return isUpcoming && !isExited;
         if (statusFilter === "Due") return hasDue;
         return true;
     });
@@ -334,14 +341,8 @@ export const DailyRooms: React.FC = () => {
     };
 
     // Calculate days between check-in and check-out
-    const calculateDays = (startStr?: string, endStr?: string): number => {
-        if (!startStr) return 1;
-        const start = new Date(startStr);
-        const end = endStr ? new Date(endStr) : new Date();
-        const diffTime = Math.max(0, end.getTime() - start.getTime());
-        const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
-        return Math.max(1, diffDays);
-    };
+    const calculateDays = (startStr?: string, endStr?: string): number =>
+        calculateDaysBetween(startStr, endStr);
 
     // Calculations for wizard review
     const totalInitialCharges = watchedDailyRate + watchedAdvance;
@@ -355,6 +356,8 @@ export const DailyRooms: React.FC = () => {
         setIsFetchingTariff(false);
         setActiveAllocation(null);
         setIsCheckingAllocation(false);
+        setIsSavingCustomer(false);
+        setIsSubmitting(false);
         setIsExistingCustomer(false);
         setIsEditingPersonalDetails(true);
         setWizardStep(1);
@@ -465,6 +468,8 @@ export const DailyRooms: React.FC = () => {
 
     // Wizard navigation
     const handleNextStep = async () => {
+        if (isSavingCustomer || isCheckingAllocation || isFetchingTariff || isSubmitting) return;
+
         let fieldsToValidate: (keyof DailyStayFormValues)[] = [];
         if (wizardStep === 1) {
             if (watchedAadhaar && watchedAadhaar.trim().length > 0) {
@@ -514,6 +519,7 @@ export const DailyRooms: React.FC = () => {
                 };
 
                 if (!isExistingCustomer) {
+                    setIsSavingCustomer(true);
                     try {
                         const response = await customerService.saveCustomer(personalData as any);
                         if (response.code === 200 || response.code === 201) {
@@ -523,9 +529,16 @@ export const DailyRooms: React.FC = () => {
                                 setPersistedCustomerId(custIdToCheck);
                             }
                             toast.success("Guest personal details saved.");
+                        } else {
+                            toast.error("Failed to save guest personal details.");
+                            return;
                         }
-                    } catch (err) {
+                    } catch (err: any) {
                         console.warn("Could not save customer details:", err);
+                        toast.error(err?.message || "Failed to save guest personal details.");
+                        return;
+                    } finally {
+                        setIsSavingCustomer(false);
                     }
                 }
 
@@ -567,91 +580,97 @@ export const DailyRooms: React.FC = () => {
 
     // Save Daily Stay Registration
     const handleSaveStay = async (data: DailyStayFormValues) => {
-        if (!selectedRoomObj || !selectedRoomObj.id) {
-            toast.error("Please select a valid room for daily stay allocation.");
-            return;
-        }
-
-        let customerIdToUse = persistedCustomerId;
-        if (!customerIdToUse) {
-            const personalPayload = {
-                firstName: data.firstName.trim(),
-                lastName: data.lastName.trim(),
-                gender: data.gender,
-                dateOfBirth: data.dateOfBirth ? data.dateOfBirth : null,
-                mobileNumber: data.mobileNumber.trim(),
-                altMobileNumber: data.altMobileNumber ? data.altMobileNumber.trim() : null,
-                email: data.email ? data.email.trim() : null,
-                aadhaarNumber: data.aadhaarNumber ? data.aadhaarNumber.trim() : null,
-                occupation: data.occupation ? data.occupation.trim() : null,
-                emergencyContactName: data.emergencyContactName ? data.emergencyContactName.trim() : null,
-                emergencyContactPhone: data.emergencyContactPhone ? data.emergencyContactPhone.trim() : null,
-                permanentAddress: data.permanentAddress ? data.permanentAddress.trim() : null,
-            };
-            try {
-                const saveRes = await customerService.saveCustomer(personalPayload as any);
-                if (saveRes.code < 200 || saveRes.code >= 300) {
-                    console.error("Could not register customer profile:", saveRes);
-                    toast.error(saveRes.description || "Failed to register customer profile.");
-                    return;
-                }
-                const saved = (saveRes.data as any)?.data || saveRes.data;
-                if (saved?.id) {
-                    customerIdToUse = Number(saved.id);
-                    setPersistedCustomerId(customerIdToUse);
-                } else {
-                    toast.error("Failed to retrieve registered customer ID.");
-                    return;
-                }
-            } catch (err: any) {
-                console.error("Could not register customer profile:", err);
-                toast.error(err?.message || "Failed to register customer profile.");
-                return;
-            }
-        }
-
+        if (isSubmitting) return;
+        setIsSubmitting(true);
         try {
-            const stayRes = await customerStayService.createCustomerStay({
-                customerId: customerIdToUse!,
-                hostelId: hostel?.id ? Number(hostel.id) : undefined,
-                roomId: Number(selectedRoomObj.id),
-                bedNumber: data.bedNumber || undefined,
-                checkInDate: data.joinDate,
-                checkOutDate: data.checkOutDate || undefined,
-                financialTerms: {
-                    roomTariffId: selectedTariffId || (data.roomTariffId ? Number(data.roomTariffId) : null),
-                    billingMode: "DAILY",
-                    dailyRate: data.dailyRate,
-                    monthlyRent: 0,
-                    securityDepositRequired: data.advanceAmount || 0,
-                    billingAnchorDate: data.joinDate,
-                },
-                initialPayment:
-                    data.amountPaid > 0
-                        ? {
-                              amount: data.amountPaid,
-                              paymentMode: (data.paymentMethod as PaymentMethod) || "CASH",
-                              notes: `Initial daily booking payment for Room ${data.roomNumber}${data.bedNumber ? ` Bed ${data.bedNumber}` : ""}`,
-                          }
-                        : undefined,
-            });
-
-            if (stayRes.code < 200 || stayRes.code >= 300) {
-                console.error("Could not complete daily customer stay registration:", stayRes);
-                const errorMsg = stayRes.description || "Failed to book daily stay. Please verify room availability and rates.";
-                toast.error(errorMsg);
+            if (!selectedRoomObj || !selectedRoomObj.id) {
+                toast.error("Please select a valid room for daily stay allocation.");
                 return;
             }
 
-            toast.success(`Daily stay booked successfully for "${data.firstName} ${data.lastName}".`);
-            setIsWizardOpen(false);
-            await loadDirectory();
-            await loadRooms();
-            await refreshStatistics(true);
-        } catch (apiErr: any) {
-            console.error("Could not complete daily customer stay registration:", apiErr);
-            const errorMsg = apiErr?.response?.data?.message || apiErr?.description || apiErr?.message || "Check-in failed.";
-            toast.error(errorMsg);
+            let customerIdToUse = persistedCustomerId;
+            if (!customerIdToUse) {
+                const personalPayload = {
+                    firstName: data.firstName.trim(),
+                    lastName: data.lastName.trim(),
+                    gender: data.gender,
+                    dateOfBirth: data.dateOfBirth ? data.dateOfBirth : null,
+                    mobileNumber: data.mobileNumber.trim(),
+                    altMobileNumber: data.altMobileNumber ? data.altMobileNumber.trim() : null,
+                    email: data.email ? data.email.trim() : null,
+                    aadhaarNumber: data.aadhaarNumber ? data.aadhaarNumber.trim() : null,
+                    occupation: data.occupation ? data.occupation.trim() : null,
+                    emergencyContactName: data.emergencyContactName ? data.emergencyContactName.trim() : null,
+                    emergencyContactPhone: data.emergencyContactPhone ? data.emergencyContactPhone.trim() : null,
+                    permanentAddress: data.permanentAddress ? data.permanentAddress.trim() : null,
+                };
+                try {
+                    const saveRes = await customerService.saveCustomer(personalPayload as any);
+                    if (saveRes.code < 200 || saveRes.code >= 300) {
+                        console.error("Could not register customer profile:", saveRes);
+                        toast.error(saveRes.description || "Failed to register customer profile.");
+                        return;
+                    }
+                    const saved = (saveRes.data as any)?.data || saveRes.data;
+                    if (saved?.id) {
+                        customerIdToUse = Number(saved.id);
+                        setPersistedCustomerId(customerIdToUse);
+                    } else {
+                        toast.error("Failed to retrieve registered customer ID.");
+                        return;
+                    }
+                } catch (err: any) {
+                    console.error("Could not register customer profile:", err);
+                    toast.error(err?.message || "Failed to register customer profile.");
+                    return;
+                }
+            }
+
+            try {
+                const stayRes = await customerStayService.createCustomerStay({
+                    customerId: customerIdToUse!,
+                    hostelId: hostel?.id ? Number(hostel.id) : undefined,
+                    roomId: Number(selectedRoomObj.id),
+                    bedNumber: data.bedNumber || undefined,
+                    checkInDate: data.joinDate,
+                    checkOutDate: data.checkOutDate || undefined,
+                    financialTerms: {
+                        roomTariffId: selectedTariffId || (data.roomTariffId ? Number(data.roomTariffId) : null),
+                        billingMode: "DAILY",
+                        dailyRate: data.dailyRate,
+                        monthlyRent: 0,
+                        securityDepositRequired: data.advanceAmount || 0,
+                        billingAnchorDate: data.joinDate,
+                    },
+                    initialPayment:
+                        data.amountPaid > 0
+                            ? {
+                                  amount: data.amountPaid,
+                                  paymentMode: (data.paymentMethod as PaymentMethod) || "CASH",
+                                  notes: `Initial daily booking payment for Room ${data.roomNumber}${data.bedNumber ? ` Bed ${data.bedNumber}` : ""}`,
+                              }
+                            : undefined,
+                });
+
+                if (stayRes.code < 200 || stayRes.code >= 300) {
+                    console.error("Could not complete daily customer stay registration:", stayRes);
+                    const errorMsg = stayRes.description || "Failed to book daily stay. Please verify room availability and rates.";
+                    toast.error(errorMsg);
+                    return;
+                }
+
+                toast.success(`Daily stay booked successfully for "${data.firstName} ${data.lastName}".`);
+                setIsWizardOpen(false);
+                await loadDirectory();
+                await loadRooms();
+                await refreshStatistics(true);
+            } catch (apiErr: any) {
+                console.error("Could not complete daily customer stay registration:", apiErr);
+                const errorMsg = apiErr?.response?.data?.message || apiErr?.description || apiErr?.message || "Check-in failed.";
+                toast.error(errorMsg);
+            }
+        } finally {
+            setIsSubmitting(false);
         }
     };
 
@@ -777,6 +796,10 @@ export const DailyRooms: React.FC = () => {
                                 </tr>
                             ) : (
                                 filteredDailyCustomers.map(b => {
+                                    const isExited =
+                                        b.customerStatus === "INACTIVE" ||
+                                        b.allocationStatus === "ENDED" ||
+                                        (!b.allocationStatus && Boolean(b.checkOutDate && b.checkOutDate < todayStr));
                                     const isUpcoming = b.joinDate && b.joinDate > todayStr;
                                     const stayDays = calculateDays(b.joinDate, b.checkOutDate);
                                     const due = Number(b.outstandingBalance || 0);
@@ -827,46 +850,68 @@ export const DailyRooms: React.FC = () => {
                                             </td>
 
                                             <td className="px-5 py-4 text-center">
-                                                <span
-                                                    className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-semibold ${
-                                                        isUpcoming
-                                                            ? "bg-sky-50 text-sky-700 border border-sky-200"
-                                                            : "bg-emerald-50 text-emerald-700 border border-emerald-200"
-                                                    }`}
-                                                >
-                                                    {isUpcoming ? "Upcoming" : "Active Stay"}
-                                                </span>
+                                                {isExited ? (
+                                                    <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-semibold bg-slate-100 text-slate-600 border border-slate-200">
+                                                        Checked Out
+                                                    </span>
+                                                ) : (
+                                                    <span
+                                                        className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-semibold ${
+                                                            isUpcoming
+                                                                ? "bg-sky-50 text-sky-700 border border-sky-200"
+                                                                : "bg-emerald-50 text-emerald-700 border border-emerald-200"
+                                                        }`}
+                                                    >
+                                                        {isUpcoming ? "Upcoming" : "Active Stay"}
+                                                    </span>
+                                                )}
                                             </td>
 
                                             <td className="px-5 py-4">
-                                                <div className="flex items-center justify-center gap-1.5">
-                                                    {/* Pay Button */}
-                                                    <button
-                                                        onClick={() => setPayModalCustomer(b)}
-                                                        className="p-1.5 rounded-lg text-emerald-700 bg-emerald-50 hover:bg-emerald-100 border border-emerald-200 transition cursor-pointer"
-                                                        title="Record payment"
-                                                    >
-                                                        <IndianRupee className="w-3.5 h-3.5" />
-                                                    </button>
+                                                {isExited ? (
+                                                    <div className="flex items-center justify-center gap-1.5">
+                                                        <span className="inline-flex items-center px-2.5 py-1 text-xs font-semibold text-slate-500 bg-slate-100 rounded-lg border border-slate-200">
+                                                            Exited
+                                                        </span>
+                                                        {/* Financial Ledger Button */}
+                                                        <button
+                                                            onClick={() => setFinancialModalCustomer({ id: b.customerId, name: b.name })}
+                                                            className="p-1.5 rounded-lg text-indigo-700 bg-indigo-50 hover:bg-indigo-100 border border-indigo-200 transition cursor-pointer"
+                                                            title="View financial ledger & daily charges"
+                                                        >
+                                                            <Receipt className="w-3.5 h-3.5" />
+                                                        </button>
+                                                    </div>
+                                                ) : (
+                                                    <div className="flex items-center justify-center gap-1.5">
+                                                        {/* Pay Button */}
+                                                        <button
+                                                            onClick={() => setPayModalCustomer(b)}
+                                                            className="p-1.5 rounded-lg text-emerald-700 bg-emerald-50 hover:bg-emerald-100 border border-emerald-200 transition cursor-pointer"
+                                                            title="Record payment"
+                                                        >
+                                                            <IndianRupee className="w-3.5 h-3.5" />
+                                                        </button>
 
-                                                    {/* Financial Ledger Button */}
-                                                    <button
-                                                        onClick={() => setFinancialModalCustomer({ id: b.customerId, name: b.name })}
-                                                        className="p-1.5 rounded-lg text-indigo-700 bg-indigo-50 hover:bg-indigo-100 border border-indigo-200 transition cursor-pointer"
-                                                        title="View financial ledger & daily charges"
-                                                    >
-                                                        <Receipt className="w-3.5 h-3.5" />
-                                                    </button>
+                                                        {/* Financial Ledger Button */}
+                                                        <button
+                                                            onClick={() => setFinancialModalCustomer({ id: b.customerId, name: b.name })}
+                                                            className="p-1.5 rounded-lg text-indigo-700 bg-indigo-50 hover:bg-indigo-100 border border-indigo-200 transition cursor-pointer"
+                                                            title="View financial ledger & daily charges"
+                                                        >
+                                                            <Receipt className="w-3.5 h-3.5" />
+                                                        </button>
 
-                                                    {/* End Stay / Checkout Button */}
-                                                    <button
-                                                        onClick={() => setEndStayTarget(b)}
-                                                        className="p-1.5 rounded-lg text-rose-700 bg-rose-50 hover:bg-rose-100 border border-rose-200 transition cursor-pointer"
-                                                        title="Check-out guest and vacate bed"
-                                                    >
-                                                        <LogOut className="w-3.5 h-3.5" />
-                                                    </button>
-                                                </div>
+                                                        {/* End Stay / Checkout Button */}
+                                                        <button
+                                                            onClick={() => setEndStayTarget(b)}
+                                                            className="p-1.5 rounded-lg text-rose-700 bg-rose-50 hover:bg-rose-100 border border-rose-200 transition cursor-pointer"
+                                                            title="Check-out guest and vacate bed"
+                                                        >
+                                                            <LogOut className="w-3.5 h-3.5" />
+                                                        </button>
+                                                    </div>
+                                                )}
                                             </td>
                                         </tr>
                                     );
@@ -1008,7 +1053,12 @@ export const DailyRooms: React.FC = () => {
                                                 <button
                                                     type="button"
                                                     onClick={handlePrevStep}
-                                                    className="inline-flex items-center gap-1 px-4 py-2 border border-slate-200 rounded-xl text-xs font-semibold text-slate-700 bg-white hover:bg-slate-50 transition shadow-sm cursor-pointer"
+                                                    disabled={isSavingCustomer || isCheckingAllocation || isFetchingTariff || isSubmitting}
+                                                    className={`inline-flex items-center gap-1 px-4 py-2 border rounded-xl text-xs font-semibold shadow-sm transition ${
+                                                        isSavingCustomer || isCheckingAllocation || isFetchingTariff || isSubmitting
+                                                            ? "bg-slate-100 text-slate-400 border-slate-200 cursor-not-allowed"
+                                                            : "border-slate-200 text-slate-700 bg-white hover:bg-slate-50 cursor-pointer"
+                                                    }`}
                                                 >
                                                     <ChevronLeft className="w-4 h-4" />
                                                     Back
@@ -1020,7 +1070,12 @@ export const DailyRooms: React.FC = () => {
                                             <button
                                                 type="button"
                                                 onClick={() => setIsWizardOpen(false)}
-                                                className="px-4 py-2 border border-slate-200 rounded-xl text-xs font-semibold text-slate-700 bg-white hover:bg-slate-50 transition shadow-sm cursor-pointer"
+                                                disabled={isSavingCustomer || isCheckingAllocation || isFetchingTariff || isSubmitting}
+                                                className={`px-4 py-2 border rounded-xl text-xs font-semibold shadow-sm transition ${
+                                                    isSavingCustomer || isCheckingAllocation || isFetchingTariff || isSubmitting
+                                                        ? "bg-slate-100 text-slate-400 border-slate-200 cursor-not-allowed"
+                                                        : "border-slate-200 text-slate-700 bg-white hover:bg-slate-50 cursor-pointer"
+                                                }`}
                                             >
                                                 Cancel
                                             </button>
@@ -1028,18 +1083,25 @@ export const DailyRooms: React.FC = () => {
                                                 <button
                                                     type="button"
                                                     onClick={handleNextStep}
-                                                    disabled={isCheckingAllocation || isFetchingTariff || (wizardStep === 3 && Boolean(activeAllocation))}
-                                                    className={`inline-flex items-center gap-1 px-4 py-2 text-xs font-semibold rounded-xl shadow-md transition cursor-pointer ${
-                                                        isCheckingAllocation || isFetchingTariff || (wizardStep === 3 && Boolean(activeAllocation))
+                                                    disabled={
+                                                        isSavingCustomer ||
+                                                        isCheckingAllocation ||
+                                                        isFetchingTariff ||
+                                                        isSubmitting ||
+                                                        (wizardStep === 3 && Boolean(activeAllocation))
+                                                    }
+                                                    className={`inline-flex items-center justify-center min-w-[76px] gap-1 px-4 py-2 text-xs font-semibold rounded-xl shadow-md transition ${
+                                                        isSavingCustomer ||
+                                                        isCheckingAllocation ||
+                                                        isFetchingTariff ||
+                                                        isSubmitting ||
+                                                        (wizardStep === 3 && Boolean(activeAllocation))
                                                             ? "bg-slate-300 text-slate-500 cursor-not-allowed shadow-none"
-                                                            : "text-white bg-indigo-600 hover:bg-indigo-700 shadow-indigo-600/20"
+                                                            : "text-white bg-indigo-600 hover:bg-indigo-700 shadow-indigo-600/20 cursor-pointer"
                                                     }`}
                                                 >
-                                                    {isCheckingAllocation || isFetchingTariff ? (
-                                                        <>
-                                                            <Loader2 className="w-4 h-4 animate-spin" />
-                                                            <span>{isCheckingAllocation ? "Checking Allocation..." : "Loading Pricing..."}</span>
-                                                        </>
+                                                    {isSavingCustomer || isCheckingAllocation || isFetchingTariff ? (
+                                                        <Loader2 className="w-4 h-4 animate-spin" />
                                                     ) : (
                                                         <>
                                                             <span>Next</span>
@@ -1050,9 +1112,18 @@ export const DailyRooms: React.FC = () => {
                                             ) : (
                                                 <button
                                                     type="submit"
-                                                    className="px-4 py-2 text-xs font-semibold text-white bg-indigo-600 hover:bg-indigo-700 rounded-xl shadow-md shadow-indigo-600/20 transition cursor-pointer"
+                                                    disabled={isSubmitting}
+                                                    className={`inline-flex items-center justify-center min-w-[120px] gap-1.5 px-4 py-2 text-xs font-semibold rounded-xl shadow-md transition ${
+                                                        isSubmitting
+                                                            ? "bg-slate-300 text-slate-500 cursor-not-allowed shadow-none"
+                                                            : "text-white bg-indigo-600 hover:bg-indigo-700 shadow-indigo-600/20 cursor-pointer"
+                                                    }`}
                                                 >
-                                                    Confirm Daily Check-in
+                                                    {isSubmitting ? (
+                                                        <Loader2 className="w-4 h-4 animate-spin" />
+                                                    ) : (
+                                                        <span>Confirm Daily Check-in</span>
+                                                    )}
                                                 </button>
                                             )}
                                         </div>

@@ -21,6 +21,7 @@ export interface CustomerDirectoryItem {
     allocationStatus?: "ACTIVE" | "ENDED" | "CANCELLED";
     outstandingBalance: number;
     latestPaymentDate?: string;
+    customerStatus?: "ACTIVE" | "INACTIVE" | "BLOCKED";
 }
 
 class CustomerService extends BaseService {
